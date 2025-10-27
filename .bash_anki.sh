@@ -7,7 +7,7 @@ function _anki_get_question_hash() {
 # Helper: Check if a question is due (returns 0 if due, 1 if not)
 function _anki_is_question_due() {
 	local hash="$1"
-	local result=$(sqlite3 /home/zachleach/anki/anki.db "SELECT due_date, multiplier FROM schedule_info WHERE question_hash = '${hash}';" 2>/dev/null)
+	local result=$(sqlite3 $HOME/anki/anki.db "SELECT due_date, multiplier FROM schedule_info WHERE question_hash = '${hash}';" 2>/dev/null)
 
 	if [[ -z "$result" ]]; then
 		# question not in database = due by default
@@ -40,12 +40,12 @@ function _anki_get_due_questions() {
 		done
 	else
 		# get all due questions from database
-		sqlite3 /home/zachleach/anki/anki.db "SELECT question_text FROM schedule_info WHERE due_date <= '${today}' AND multiplier <= 3;" 2>/dev/null
+		sqlite3 $HOME/anki/anki.db "SELECT question_text FROM schedule_info WHERE due_date <= '${today}' AND multiplier <= 3;" 2>/dev/null
 	fi
 }
 
 # Core: Count due questions in a file
-function _anki_count_due() {
+_anki_count_due() {
 	local file="$1"
 	[[ ! -f "$file" ]] && echo "0" && return
 
@@ -61,7 +61,7 @@ function _anki_count_due() {
 }
 
 # Core: Initialize database with proper schema
-function _anki_init_database() {
+_anki_init_database() {
 	local anki_path="${1:-$HOME/anki}"
 	local db_file="${anki_path}/anki.db"
 
@@ -88,7 +88,7 @@ EOF
 }
 
 # Core: Clean up orphaned database entries (questions that no longer exist in files)
-function _anki_cleanup_orphaned() {
+_anki_cleanup_orphaned() {
 	local anki_path="${1:-$HOME/anki}"
 	[[ ! -d "$anki_path" ]] && return
 
@@ -102,7 +102,7 @@ function _anki_cleanup_orphaned() {
 
 	# get all hashes from database
 	local db_hashes=$(mktemp)
-	sqlite3 /home/zachleach/anki/anki.db "SELECT question_hash FROM schedule_info;" 2>/dev/null > "$db_hashes"
+	sqlite3 $HOME/anki/anki.db "SELECT question_hash FROM schedule_info;" 2>/dev/null > "$db_hashes"
 
 	# find orphaned hashes (in database but not in files)
 	local orphaned_hashes=$(comm -13 "$current_hashes" "$db_hashes")
@@ -110,7 +110,7 @@ function _anki_cleanup_orphaned() {
 	# delete orphaned entries from database
 	if [[ -n "$orphaned_hashes" ]]; then
 		while read hash; do
-			[[ -n "$hash" ]] && sqlite3 /home/zachleach/anki/anki.db "DELETE FROM schedule_info WHERE question_hash = '${hash}';" 2>/dev/null
+			[[ -n "$hash" ]] && sqlite3 $HOME/anki/anki.db "DELETE FROM schedule_info WHERE question_hash = '${hash}';" 2>/dev/null
 		done <<< "$orphaned_hashes"
 	fi
 
@@ -119,7 +119,7 @@ function _anki_cleanup_orphaned() {
 }
 
 # Core: Show directory tree with due question counts
-function _anki_show_due_tree() {
+_anki_show_due_tree() {
 	local path="${1:-$HOME/anki}"
 	[[ ! -e "$path" ]] && echo "Path not found: $path" && return
 
@@ -150,7 +150,7 @@ function _anki_show_due_tree() {
 }
 
 # Core: Review questions in a file (original anki logic)
-function _anki_review_file() {
+_anki_review_file() {
 	local file="$1"
 	[[ ! -f "${file}" ]] && echo "File not found: ${file}" && return
 
@@ -161,7 +161,7 @@ function _anki_review_file() {
 		# get the question from the database
 		hash=$(_anki_get_question_hash "$question")
 		original_question="$question"
-		result=$(sqlite3 /home/zachleach/anki/anki.db "SELECT due_date, multiplier FROM schedule_info WHERE question_hash = '${hash}';" 2>/dev/null)
+		result=$(sqlite3 $HOME/anki/anki.db "SELECT due_date, multiplier FROM schedule_info WHERE question_hash = '${hash}';" 2>/dev/null)
 
 		if [[ -z "$result" ]]; then
 			due_date=$(date +%Y-%m-%d)
@@ -186,21 +186,23 @@ function _anki_review_file() {
 		sed -n "/^${question}$/,/^\?/p" "${file}" | head -n -4
 		read response </dev/tty
 
-		# update the database based on response (1 means re-learn)
-		if [[ "$response" == "1" ]]; then
-			multiplier=0
-		else
-			multiplier=$((multiplier + 1))
-		fi
+		# update the database based on response (1 means re-learn, - means skip database update)
+		if [[ "$response" != "-" ]]; then
+			if [[ "$response" == "1" ]]; then
+				multiplier=0
+			else
+				multiplier=$((multiplier + 1))
+			fi
 
-		due_date=$(date -d "+$((3 * multiplier)) days" +%Y-%m-%d)
-		escaped_question="${original_question//\'/\'\'}"
-		sqlite3 /home/zachleach/anki/anki.db "INSERT OR REPLACE INTO schedule_info (question_hash, due_date, multiplier, question_text) VALUES ('${hash}', '${due_date}', ${multiplier}, '${escaped_question}');" 2>/dev/null
+			due_date=$(date -d "+$((3 * multiplier)) days" +%Y-%m-%d)
+			escaped_question="${original_question//\'/\'\'}"
+			sqlite3 $HOME/anki/anki.db "INSERT OR REPLACE INTO schedule_info (question_hash, due_date, multiplier, question_text) VALUES ('${hash}', '${due_date}', ${multiplier}, '${escaped_question}');" 2>/dev/null
+		fi
 	done
 }
 
 # Core: Custom study mode - review all questions without updating database
-function _anki_custom_study() {
+_anki_custom_study() {
 	local file="$1"
 	[[ ! -f "${file}" ]] && echo "File not found: ${file}" && return
 
